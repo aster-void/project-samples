@@ -20,7 +20,7 @@ var tmpl = template.Must(template.New("/websocket").Parse(`
 	</div>
 </div>
 <form id="input-form" ws-send>
-	<input name="content" placeholder="message">
+	<input name="content" placeholder="message" autofocus>
     <button>送信</button>
 </form>
 `,

@@ -46,7 +46,7 @@ func NewClient[T any](w http.ResponseWriter, r *http.Request, onRecv func(*Clien
 		return nil, err
 	}
 
-	if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+	if err := conn.WriteMessage(websocket.PongMessage, nil); err != nil {
 		return nil, err
 	}
 	log.Println("Connection established with a new client!")
