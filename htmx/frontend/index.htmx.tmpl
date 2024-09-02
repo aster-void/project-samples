@@ -1,0 +1,25 @@
+<!doctype html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>HTMX: Chat Rooms</title>
+  <script src="https://unpkg.com/htmx.org@2.0.2"></script>
+  <script src="https://unpkg.com/htmx-ext-ws@2.0.1/ws.js"></script>
+</head>
+
+<body>
+  <h1>
+    HTMX + Go/Echo Example
+  </h1>
+  <div id="messages-container" hx-ext="ws" ws-connect="/websocket" hx-swap-oob="beforeend" >
+    {{ range . }}
+      <div class="message-box">
+        {{ .Content }}
+      </div>
+    {{ end }}
+  </div>
+  <form hx-on::after-request="this.reset()">
+    <input name="content" placeholder="message">
+    <button hx-trigger="click" hx-post="/send" hx-swap="beforeend" hx-target="#messages-container">送信</button>
+  </form>
+</body>
