@@ -6,9 +6,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
-	"github.com/aster-void/project-samples/htmx/backend-go/channel"
+	// "github.com/aster-void/project-samples/htmx/backend-go/channel"
 	"github.com/gorilla/websocket"
 )
 
@@ -32,6 +33,9 @@ type Client struct {
 	hubs   map[*Hub]bool
 	send   chan []byte
 	conn   *websocket.Conn
+	m      *sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
 	closed bool
 }
 
@@ -40,33 +44,46 @@ func NewClient(w http.ResponseWriter, r *http.Request, hubs ...*Hub) (*Client, e
 	if err != nil {
 		return nil, err
 	}
+
+	if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &Client{
+		send:   make(chan []byte, 512),
+		conn:   conn,
+		m:      &sync.Mutex{},
+		ctx:    ctx,
+		cancel: cancel,
+		closed: false,
+	}
+
 	var hs = make(map[*Hub]bool)
 	for _, hub := range hubs {
 		hs[hub] = true
+		hub.clients[c] = true
 	}
+	c.hubs = hs
 
-	conn.WriteMessage(websocket.PingMessage, nil)
-
-	return &Client{
-		hubs:   hs,
-		send:   make(chan []byte, 512),
-		conn:   conn,
-		closed: false,
-	}, nil
+	go c.run()
+	return c, nil
 }
 
-func (c *Client) Run() {
+func (c *Client) run() {
 	defer c.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go c.runSender(ctx, cancel)
-	go c.runReceiver(ctx, cancel)
-
-	<-ctx.Done()
+	go c.runPing()
+	go c.runReceiver()
+	<-c.ctx.Done()
 }
 
-func (c *Client) runReceiver(_ context.Context, cancel context.CancelFunc) {
-	defer cancel()
+func (c *Client) Done() <-chan struct{} {
+	return c.ctx.Done()
+}
+
+func (c *Client) runReceiver() {
+	defer c.cancel()
 
 	c.conn.SetReadLimit(MAX_MESSAGE_SIZE)
 	if err := c.conn.SetReadDeadline(time.Now().Add(PONG_WAIT)); err != nil {
@@ -83,10 +100,10 @@ func (c *Client) runReceiver(_ context.Context, cancel context.CancelFunc) {
 
 	for {
 		mtype, r, err := c.conn.NextReader()
-		if mtype != websocket.TextMessage {
+		if err != nil {
 			return
 		}
-		if err != nil {
+		if mtype != websocket.TextMessage {
 			return
 		}
 		b, err := io.ReadAll(r)
@@ -100,16 +117,16 @@ func (c *Client) runReceiver(_ context.Context, cancel context.CancelFunc) {
 	}
 }
 
-func (c *Client) runSender(ctx context.Context, cancel context.CancelFunc) {
+func (c *Client) runPing() {
 	ticker := time.NewTicker(PING_PERIOD)
 	defer func() {
 		ticker.Stop()
-		cancel()
+		c.cancel()
 	}()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			return
 		// PING
 		case <-ticker.C:
@@ -119,40 +136,35 @@ func (c *Client) runSender(ctx context.Context, cancel context.CancelFunc) {
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
-		// SEND
-		case b, ok := <-c.send:
-			if !ok {
-				// channel closed
-				return
-			}
-			err := c.conn.SetWriteDeadline(time.Now().Add(WRITE_WAIT))
-			if err != nil {
-				return
-			}
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			if _, err := w.Write(b); err != nil {
-				return
-			}
-			if err := channel.Flush(w, c.send, newline...); err != nil {
-				return
-			}
-			if err := w.Close(); err != nil {
-				return
-			}
 		}
 	}
 }
 
 func (c *Client) Send(b []byte) error {
-	select {
-	case c.send <- b:
-		return nil
-	default:
+	if c.closed {
 		return errors.New("disconnected")
 	}
+	c.m.Lock()
+	defer c.m.Unlock()
+	// SEND
+	err := c.conn.SetWriteDeadline(time.Now().Add(WRITE_WAIT))
+	if err != nil {
+		return errors.New("SetWriteDeadline fail")
+	}
+	w, err := c.conn.NextWriter(websocket.TextMessage)
+	if err != nil {
+		return errors.New("NextWriter fail")
+	}
+	if _, err := w.Write(b); err != nil {
+		return errors.New("w.Write fail")
+	}
+	// if err := channel.Flush(w, c.send, newline...); err != nil {
+	// 	return errors.New("channel.Flush fail")
+	// }
+	if err := w.Close(); err != nil {
+		return errors.New("w.Close fail")
+	}
+	return nil
 }
 
 func (c *Client) Join(h *Hub) {
@@ -170,6 +182,7 @@ func (c *Client) Close() {
 		return
 	}
 	c.closed = true
+	c.cancel()
 
 	close(c.send)
 	_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
