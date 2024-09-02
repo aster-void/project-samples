@@ -15,10 +15,9 @@ func main() {
 	db := database.Init()
 
 	e.GET("/", router.Index(db))
-	e.POST("/send", router.Send(db))
-	e.GET("/websocket", router.WebSocket())
+	e.GET("/websocket", router.WebSocket(db))
 
-	if err := e.Start(":3200"); !errors.Is(err, http.ErrServerClosed) {
+	if err := e.Start(":3000"); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalln(err)
 	}
 }

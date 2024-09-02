@@ -5,50 +5,40 @@ import (
 	"log"
 )
 
-type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	transform  func(string) string
+type Hub[T any] struct {
+	clients   map[*Client[T]]bool
+	transform func(T) string
 }
 
 // only 1 mapper is allowed
-func NewHub(mapper ...func(string) string) *Hub {
-	var transform func(string) string
+func NewHub[T any](mapper ...func(T) string) *Hub[T] {
+	var transform func(T) string
 	if len(mapper) < 1 {
-		transform = func(s string) string { return s }
+		transform = func(t T) string { return fmt.Sprint(t) }
 	} else {
 		transform = mapper[0]
 	}
-	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 1),
-		register:   make(chan *Client, 1),
-		unregister: make(chan *Client, 1),
-		transform:  transform,
+	return &Hub[T]{
+		clients:   make(map[*Client[T]]bool),
+		transform: transform,
 	}
 }
 
-func (h *Hub) Run() {
-	for {
-		select {
-		case c := <-h.register:
-			h.clients[c] = true
-		case c := <-h.unregister:
-			delete(h.clients, c)
-		}
-	}
+func (h *Hub[T]) register(c *Client[T]) {
+	h.clients[c] = true
+}
+func (h *Hub[T]) unregister(c *Client[T]) {
+	delete(h.clients, c)
 }
 
-func (h *Hub) Broadcast(message string) {
+func (h *Hub[T]) Broadcast(message T) {
 	fmt.Println("hub: Broadcasting", message)
 	fmt.Println("to: ", len(h.clients), "clients")
-	var b = []byte(message)
+	var b = []byte(h.transform(message))
 	for c := range h.clients {
 		err := c.Send(b)
 		if err != nil {
-			log.Println(h.clients, err)
+			log.Println(err)
 			c.Close()
 		}
 	}

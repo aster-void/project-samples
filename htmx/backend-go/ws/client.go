@@ -29,9 +29,10 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-type Client struct {
-	hubs   map[*Hub]bool
-	send   chan []byte
+type Client[T any] struct {
+	hubs   map[*Hub[T]]bool
+	onRecv func(*Client[T], []byte)
+
 	conn   *websocket.Conn
 	m      *sync.Mutex
 	ctx    context.Context
@@ -39,7 +40,7 @@ type Client struct {
 	closed bool
 }
 
-func NewClient(w http.ResponseWriter, r *http.Request, hubs ...*Hub) (*Client, error) {
+func NewClient[T any](w http.ResponseWriter, r *http.Request, onRecv func(*Client[T], []byte), hubs ...*Hub[T]) (*Client[T], error) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return nil, err
@@ -48,10 +49,11 @@ func NewClient(w http.ResponseWriter, r *http.Request, hubs ...*Hub) (*Client, e
 	if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 		return nil, err
 	}
+	log.Println("Connection established with a new client!")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Client{
-		send:   make(chan []byte, 512),
+	c := &Client[T]{
+		onRecv: onRecv,
 		conn:   conn,
 		m:      &sync.Mutex{},
 		ctx:    ctx,
@@ -59,7 +61,7 @@ func NewClient(w http.ResponseWriter, r *http.Request, hubs ...*Hub) (*Client, e
 		closed: false,
 	}
 
-	var hs = make(map[*Hub]bool)
+	var hs = make(map[*Hub[T]]bool)
 	for _, hub := range hubs {
 		hs[hub] = true
 		hub.clients[c] = true
@@ -70,7 +72,7 @@ func NewClient(w http.ResponseWriter, r *http.Request, hubs ...*Hub) (*Client, e
 	return c, nil
 }
 
-func (c *Client) run() {
+func (c *Client[T]) run() {
 	defer c.Close()
 
 	go c.runPing()
@@ -78,11 +80,11 @@ func (c *Client) run() {
 	<-c.ctx.Done()
 }
 
-func (c *Client) Done() <-chan struct{} {
+func (c *Client[T]) Done() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-func (c *Client) runReceiver() {
+func (c *Client[T]) runReceiver() {
 	defer c.cancel()
 
 	c.conn.SetReadLimit(MAX_MESSAGE_SIZE)
@@ -107,17 +109,20 @@ func (c *Client) runReceiver() {
 			return
 		}
 		b, err := io.ReadAll(r)
-		log.Println("Read message")
 		if err != nil {
 			return
 		}
-		for hub := range c.hubs {
-			hub.broadcast <- b
-		}
+		c.onRecv(c, b)
 	}
 }
 
-func (c *Client) runPing() {
+func (c *Client[T]) BroadCastToAll(t T) {
+	for hub := range c.hubs {
+		hub.Broadcast(t)
+	}
+}
+
+func (c *Client[T]) runPing() {
 	ticker := time.NewTicker(PING_PERIOD)
 	defer func() {
 		ticker.Stop()
@@ -140,7 +145,7 @@ func (c *Client) runPing() {
 	}
 }
 
-func (c *Client) Send(b []byte) error {
+func (c *Client[T]) Send(b []byte) error {
 	if c.closed {
 		return errors.New("disconnected")
 	}
@@ -167,27 +172,23 @@ func (c *Client) Send(b []byte) error {
 	return nil
 }
 
-func (c *Client) Join(h *Hub) {
-	h.register <- c
+func (c *Client[T]) Join(h *Hub[T]) {
+	h.register(c)
 	c.hubs[h] = true
 }
 
-func (c *Client) Leave(h *Hub) {
-	h.unregister <- c
+func (c *Client[T]) Leave(h *Hub[T]) {
+	h.unregister(c)
 	delete(c.hubs, h)
 }
 
-func (c *Client) Close() {
-	if c.closed {
-		return
-	}
+func (c *Client[T]) Close() {
 	c.closed = true
 	c.cancel()
-
-	close(c.send)
-	_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-	_ = c.conn.Close()
 	for hub := range c.hubs {
 		c.Leave(hub)
 	}
+
+	_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+	_ = c.conn.Close()
 }

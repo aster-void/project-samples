@@ -19,15 +19,13 @@ func SetupServer(halt <-chan bool) {
 	e := echo.New()
 	hub := ws.NewHub()
 	e.GET("/websocket", func(c echo.Context) error {
-		client, err := ws.NewClient(c.Response(), c.Request(), hub)
+		_, err := ws.NewClient(c.Response(), c.Request(), hub)
 		if err != nil {
 			log.Fatalln(err)
 		}
-		client.Run()
 		return nil
 	})
 
-	go hub.Run()
 	go func() {
 		<-halt
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
