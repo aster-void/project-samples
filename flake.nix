@@ -17,6 +17,8 @@
         buildInputs = with pkgs;[
           # dioxus-cli # it doesn't evn compile :(
           trunk
+
+          just
         ];
         shellHook = ''
           rustup target add wasm32-unknown-unknown
