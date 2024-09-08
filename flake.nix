@@ -15,10 +15,11 @@
 
       devShell = pkgs.mkShell {
         buildInputs = with pkgs;[
-          dioxus-cli
+          # dioxus-cli # it doesn't evn compile :(
+          trunk
         ];
         shellHook = ''
-          hello from shellHook!
+          rustup target add wasm32-unknown-unknown
         '';
       };
     });
