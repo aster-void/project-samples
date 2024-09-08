@@ -11,10 +11,12 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in
     {
-      packages.x86_64-linux.hello = pkgs.hello;
-      packages.x86_64-linux.default = pkgs.hello;
+      packages.${system}.default = pkgs.mkDerivation { };
+
       devShell = pkgs.mkShell {
-        buildInputs = [ pkgs.hello ];
+        buildInputs = with pkgs;[
+          dioxus-cli
+        ];
         shellHook = ''
           hello from shellHook!
         '';
