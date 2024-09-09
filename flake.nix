@@ -21,6 +21,7 @@
           # dioxus-cli # it doesn't evn compile :(
           trunk
 
+          svelte-language-server
           nodejs_22
         ];
         shellHook = ''
