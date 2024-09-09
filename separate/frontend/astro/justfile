@@ -1,0 +1,10 @@
+default: start
+start:
+    npx astro dev
+
+build:
+    npm run build
+
+serve:
+    npm run preview
+
